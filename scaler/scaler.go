@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/f41gh7/k8s-spot-rescheduler/metrics"
 	"github.com/golang/glog"
-	"github.com/pusher/k8s-spot-rescheduler/metrics"
 	apiv1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1beta1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -54,7 +54,7 @@ func evictPod(podToEvict *apiv1.Pod, client kube_client.Interface, recorder kube
 				GracePeriodSeconds: &maxGraceful64,
 			},
 		}
-		lastError = client.Core().Pods(podToEvict.Namespace).Evict(eviction)
+		lastError = client.CoreV1().Pods(podToEvict.Namespace).Evict(eviction)
 		if lastError == nil {
 			return nil
 		}
@@ -119,7 +119,7 @@ func DrainNode(node *apiv1.Node, pods []*apiv1.Pod, client kube_client.Interface
 	for time.Now().Before(retryUntil.Add(5 * time.Second)) {
 		allGone = true
 		for _, pod := range pods {
-			podreturned, err := client.Core().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
+			podreturned, err := client.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
 			if err == nil && (podreturned != nil && podreturned.Spec.NodeName == node.Name) {
 				glog.Errorf("Not deleted yet %v", podreturned.Name)
 				allGone = false

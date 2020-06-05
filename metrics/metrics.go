@@ -17,8 +17,8 @@ limitations under the License.
 package metrics
 
 import (
+	"github.com/f41gh7/k8s-spot-rescheduler/nodes"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/pusher/k8s-spot-rescheduler/nodes"
 )
 
 const (
@@ -27,8 +27,8 @@ const (
 
 var (
 	// nodePodsCount tracks how many pods are nodes by type and by node name.
-	nodePodsCount = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	nodePodsCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: reschedulerNamespace,
 			Name:      "node_pods_count",
 			Help:      "Number of pods on each node.",

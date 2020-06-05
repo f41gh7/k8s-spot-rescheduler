@@ -17,16 +17,21 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	goflag "flag"
 	"fmt"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/kubernetes/pkg/scheduler/nodeinfo"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/pusher/k8s-spot-rescheduler/metrics"
-	"github.com/pusher/k8s-spot-rescheduler/nodes"
-	"github.com/pusher/k8s-spot-rescheduler/scaler"
+	"k8s.io/client-go/tools/leaderelection"
+	"github.com/f41gh7/k8s-spot-rescheduler/metrics"
+	"github.com/f41gh7/k8s-spot-rescheduler/nodes"
+	"github.com/f41gh7/k8s-spot-rescheduler/scaler"
 	apiv1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,9 +45,6 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	kube_record "k8s.io/client-go/tools/record"
 	api "k8s.io/kubernetes/pkg/api/legacyscheme"
-	"k8s.io/kubernetes/pkg/client/leaderelectionconfig"
-	kubectl_util "k8s.io/kubernetes/pkg/kubectl/cmd/util"
-	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
 
 	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -135,12 +137,8 @@ func main() {
 
 	// Allows active/standy HA.
 	// Prevent multiple pods running the algorithm simultaneously.
-	leaderElection := leaderelectionconfig.DefaultLeaderElectionConfiguration()
-	if *inCluster {
-		leaderElection.LeaderElect = true
-	}
-
-	if !leaderElection.LeaderElect {
+	//leaderElection := leaderelectionconfig.DefaultLeaderElectionConfiguration()
+	if !*inCluster {
 		// Leader election not enabled.
 		// Execute main logic.
 		run(kubeClient, recorder)
@@ -150,7 +148,7 @@ func main() {
 			glog.Fatalf("Unable to get hostname: %v", err)
 		}
 		// Leader election process
-		kube_leaderelection.RunOrDie(kube_leaderelection.LeaderElectionConfig{
+		leaderelection.RunOrDie(context.Background() , leaderelection.LeaderElectionConfig {
 			Lock: &resourcelock.EndpointsLock{
 				EndpointsMeta: metav1.ObjectMeta{
 					Namespace: *namespace,
@@ -162,11 +160,11 @@ func main() {
 					EventRecorder: recorder,
 				},
 			},
-			LeaseDuration: leaderElection.LeaseDuration.Duration,
-			RenewDeadline: leaderElection.RenewDeadline.Duration,
-			RetryPeriod:   leaderElection.RetryPeriod.Duration,
+			LeaseDuration: time.Second*15,
+			RenewDeadline: time.Second*10,
+			RetryPeriod: time.Second*2,
 			Callbacks: kube_leaderelection.LeaderCallbacks{
-				OnStartedLeading: func(_ <-chan struct{}) {
+				OnStartedLeading: func( ctx context.Context) {
 					// Since we are committing a suicide after losing
 					// mastership, we can safely ignore the argument.
 					run(kubeClient, recorder)
@@ -336,8 +334,11 @@ func createKubeClient(flags *flag.FlagSet, inCluster bool) (kube_client.Interfac
 		config, err = kube_restclient.InClusterConfig()
 	} else {
 		// Search environment for kubeconfig.
-		clientConfig := kubectl_util.DefaultClientConfig(flags)
-		config, err = clientConfig.ClientConfig()
+		kubeout := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+		config, err = clientcmd.BuildConfigFromFlags("", kubeout)
+		if err != nil {
+			panic(err)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to the client: %v", err)
@@ -360,14 +361,15 @@ func createEventRecorder(client kube_client.Interface) kube_record.EventRecorder
 // nodes first (Attempting to bin pack)
 func findSpotNodeForPod(predicateChecker *simulator.PredicateChecker, nodeInfos []*nodes.NodeInfo, pod *apiv1.Pod) *nodes.NodeInfo {
 	for _, nodeInfo := range nodeInfos {
-		kubeNodeInfo := schedulercache.NewNodeInfo(nodeInfo.Pods...)
+		nodeinfo.NewNodeInfo(nodeInfo.Pods...)
+		kubeNodeInfo := nodeinfo.NewNodeInfo(nodeInfo.Pods...)
 		kubeNodeInfo.SetNode(nodeInfo.Node)
 
 		// Pretend pod isn't scheduled
 		pod.Spec.NodeName = ""
 
 		// Check with the schedulers predicates to find a node to schedule on
-		if err := predicateChecker.CheckPredicates(pod, nil, kubeNodeInfo, true); err == nil {
+		if err := predicateChecker.CheckPredicates(pod, nil, kubeNodeInfo); err == nil {
 			return nodeInfo
 		}
 	}
